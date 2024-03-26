@@ -40,14 +40,13 @@ void CrnnNet::setNumThread(int numOfThread) {
     // If sequential execution is enabled this value is ignored
     // A value of 0 means ORT will pick a default
     sessionOptions.SetInterOpNumThreads(numThread);
-    sessionOptions.SetIntraOpNumThreads(numThread);
 
     // Sets graph optimization level
     // ORT_DISABLE_ALL -> To disable all optimizations
     // ORT_ENABLE_BASIC -> To enable basic optimizations (Such as redundant node removals)
     // ORT_ENABLE_EXTENDED -> To enable extended optimizations (Includes level 1 + more complex optimizations like node fusions)
     // ORT_ENABLE_ALL -> To Enable All possible opitmizations
-    sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    sessionOptions.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
 }
 
 void CrnnNet::initModel(const std::string &pathStr, const std::string &keysPath) {
