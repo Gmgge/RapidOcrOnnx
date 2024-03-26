@@ -1,6 +1,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <numeric>
+#include <cmath>
 #include "OcrUtils.h"
 #include "clipper.hpp"
 
@@ -399,4 +400,121 @@ std::string getDebugImgFilePath(const char *path, const char *imgName, size_t i,
     std::string filePath;
     filePath.append(path).append(imgName).append(tag).append(std::to_string(i)).append(".jpg");
     return filePath;
+}
+
+void add_boxes_center(std::vector<TextBox>& textBoxes) {
+    for (auto& textBox : textBoxes) {
+        cv::Moments mu = cv::moments(textBox.boxPoint);
+        cv::Point box_center;
+        box_center.x = mu.m10 / mu.m00;
+        box_center.y = mu.m01 / mu.m00;
+        textBox.boxPoint.push_back(box_center);
+    }
+}
+
+bool compare_arc_length(const TextBox& box1, const TextBox& box2) {
+    /*
+    * 根据周长比较两个多边形
+    */
+    return cv::arcLength(box1.boxPoint, true) < cv::arcLength(box2.boxPoint, true);
+}
+
+
+bool compare_box_position(const TextBox& box_a, const TextBox& box_b) {
+    int position_bias = 10;
+    // 针对近似矩形文本行进行从上到下，从左到右的排序
+    if (box_b.boxPoint[4].y - box_a.boxPoint[4].y >= position_bias ||
+        (abs(box_b.boxPoint[4].y - box_a.boxPoint[4].y) < position_bias && box_b.boxPoint[4].x > box_a.boxPoint[4].x)) {
+        return true;  // 表示box_a在box_b上方或左侧，位置较小
+    }
+    else {
+        return false;   // 表示box_a在box_b下方或右侧，位置较大
+    }
+}
+
+void sort_boxes(std::vector<TextBox>& textBoxes) {
+    /*
+    按照文本行中心位置，对文本行进行排序
+    */
+    std::sort(textBoxes.begin(), textBoxes.end(), compare_box_position);
+}
+
+void tilt_correction(cv::Mat& src, std::vector<TextBox>& textBoxes, double line_angle, double angle_threshold) {
+    /*
+    * 根据文本行倾斜，纠正文本行形心位置，以进行有效的排序
+    */
+    if (abs(line_angle) > angle_threshold) {
+        rotate_points(src, textBoxes, line_angle);
+    }
+}
+
+double radians(double angle) {
+    return angle * PI / 180.0;
+}
+
+void rotate_points(cv::Mat& src, std::vector<TextBox>& textBoxes, double line_angle, int mode) {
+    /*
+    根据图像中心点旋转图像
+    */
+    //获取旋转中心
+    int h = src.rows, w = src.cols;
+    cv::Point image_center(w / 2.0, h / 2.0);
+    //扩展后再旋转模式，防止旋转丢失内容
+    double line_radians = radians(line_angle);
+    if (mode == 1) {
+        int new_h = static_cast<int>(w * abs(sin(line_radians)) + h * abs(cos(line_radians)));
+        int new_w = static_cast<int>(h * abs(sin(line_radians)) + w * abs(cos(line_radians)));
+        for (auto& textBox : textBoxes) {
+            textBox.boxPoint[4].x += ((new_w - w) / 2.0);
+            textBox.boxPoint[4].y += ((new_h - h) / 2.0);
+        }
+        image_center.x = new_w / 2;
+        image_center.y = new_h / 2;
+    }
+    // 旋转点坐标
+    for (auto& textBox : textBoxes) {
+        double x = textBox.boxPoint[4].x - image_center.x;
+        double y = textBox.boxPoint[4].y - image_center.y;
+        textBox.boxPoint[4].x = x * cos(line_radians) + y * sin(line_radians) + image_center.x;
+        textBox.boxPoint[4].y = -x * sin(line_radians) + y * cos(line_radians) + image_center.y;
+    }
+}
+
+double calculate_line_angle(cv::Point point_1, cv::Point point_2) {
+    // 实现计算两点之间连线的角度的函数，这里假设角度是逆时针方向为正
+    double dx = double(point_2.x) - double(point_1.x);
+    double dy = double(point_2.y) - double(point_1.y);
+    return atan2(dy, dx) * 180 / PI;
+}
+
+double compute_box_angle(const TextBox &text_box) {
+    // 计算文本行倾斜角度，先筛选最长的对边(近似，因为box可能为接近矩形的四边形)，然后计算两条对边的平均角度
+    int w_sum = abs(text_box.boxPoint[1].x - text_box.boxPoint[0].x) + abs(text_box.boxPoint[2].x - text_box.boxPoint[3].x);
+    int h_sum = abs(text_box.boxPoint[3].y - text_box.boxPoint[0].y) + abs(text_box.boxPoint[2].y - text_box.boxPoint[1].y);
+
+    double angle;
+    if (w_sum > h_sum) {
+        angle = (calculate_line_angle(text_box.boxPoint[0], text_box.boxPoint[1]) + calculate_line_angle(text_box.boxPoint[3], text_box.boxPoint[2])) / 2.0;
+    }
+    else {
+        angle = (calculate_line_angle(text_box.boxPoint[0], text_box.boxPoint[3]) + calculate_line_angle(text_box.boxPoint[1], text_box.boxPoint[2])) / 2.0;
+    }
+    return angle;
+}
+
+double text_line_angle(std::vector<TextBox>& textBoxes) {
+    /*
+    * 以文本行列表中周长最长的行，代表文本行整体倾斜情况
+    */
+    // 按照box周长排序
+    // std::sort(textBoxes.begin(), textBoxes.end(), compare_arc_length);
+    // 取周长最长的文本行box做代表框
+    // TextBox represent_box = textBoxes.back();
+    double line_angle = 0.0;
+    if (!textBoxes.empty()) {
+        TextBox represent_box = *std::max_element(textBoxes.begin(), textBoxes.end(), compare_arc_length);
+        // 计算文本行的角度
+        line_angle = compute_box_angle(represent_box);
+    }
+    return line_angle;
 }
