@@ -7,6 +7,8 @@
 #include <numeric>
 #include <sys/stat.h>
 
+const double PI = 3.14159265358979323846;
+
 template<typename T, typename... Ts>
 static std::unique_ptr<T> makeUnique(Ts &&... params) {
     return std::unique_ptr<T>(new T(std::forward<Ts>(params)...));
@@ -58,6 +60,22 @@ int getThickness(cv::Mat &boxImg);
 void drawTextBox(cv::Mat &boxImg, cv::RotatedRect &rect, int thickness);
 
 void drawTextBox(cv::Mat &boxImg, const std::vector<cv::Point> &box, int thickness);
+
+void add_boxes_center(std::vector<TextBox>& textBoxes);
+
+void tilt_correction(cv::Mat &src, std::vector<TextBox>& textBoxes, double line_angle, double angle_threshold=2);
+
+void rotate_points(cv::Mat& src, std::vector<TextBox>& textBoxes, double line_angle, int mode = 1);
+
+double text_line_angle(std::vector<TextBox>& textBoxes);
+
+bool compare_arc_length(const TextBox& box1, const TextBox& box2);
+
+bool compare_box_position(const TextBox& box1, const TextBox& box2);
+
+void sort_boxes(std::vector<TextBox>& textBoxes);
+
+double compute_box_angle(const TextBox& text_box);
 
 void drawTextBoxes(cv::Mat &boxImg, std::vector<TextBox> &textBoxes, int thickness);
 
